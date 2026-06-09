@@ -27,7 +27,6 @@ export default function ConfirmCapture({ blob, pose, onRetake }: Props) {
     return () => URL.revokeObjectURL(previewUrl.current)
   }, [])
 
-  // Load ghost for comparison
   useEffect(() => {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser()
@@ -63,30 +62,38 @@ export default function ConfirmCapture({ blob, pose, onRetake }: Props) {
       }
 
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user) throw new Error('Not signed in')
+      if (!user) throw new Error('Not signed in — please reload and try again')
 
-      const filename = `${user.id}/${pose}/${today}_${Date.now()}.jpg`
+      // Use a fixed path per user/pose/date so retakes overwrite cleanly
+      const filename = `${user.id}/${pose}/${today}.jpg`
+
       const { error: uploadError } = await supabase.storage
         .from('photos')
-        .upload(filename, blob, { contentType: 'image/jpeg', upsert: false })
+        .upload(filename, blob, {
+          contentType: 'image/jpeg',
+          upsert: true,           // overwrite if retaking same day
+          cacheControl: '3600',
+        })
 
-      if (uploadError) throw uploadError
-
-      const { error: insertError } = await supabase.from('photos').insert({
-        user_id: user.id,
-        date: today,
-        pose,
-        storage_path: filename,
-      })
-
-      if (insertError) {
-        await supabase.storage.from('photos').remove([filename])
-        throw insertError
+      if (uploadError) {
+        // Common case: bucket doesn't exist yet
+        if (uploadError.message?.includes('Bucket not found') || uploadError.message?.includes('bucket')) {
+          throw new Error('Storage bucket not found. Go to Supabase → Storage and create a private bucket named "photos".')
+        }
+        throw uploadError
       }
+
+      // Upsert the DB row — handles retakes on same day gracefully
+      const { error: insertError } = await supabase.from('photos').upsert(
+        { user_id: user.id, date: today, pose, storage_path: filename },
+        { onConflict: 'user_id,date,pose' }
+      )
+
+      if (insertError) throw insertError
 
       router.push('/?saved=1')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to save')
+      setError(e instanceof Error ? e.message : 'Save failed — check console for details')
       setSaving(false)
     }
   }
@@ -97,65 +104,85 @@ export default function ConfirmCapture({ blob, pose, onRetake }: Props) {
       <div className="relative flex-1 overflow-hidden flex items-center justify-center">
         <div className="relative w-full" style={{ aspectRatio: '3/4', maxHeight: '100%' }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={previewUrl.current} alt="captured" className="absolute inset-0 w-full h-full object-cover" />
+          <img src={previewUrl.current} alt="captured"
+            className="absolute inset-0 w-full h-full object-cover" />
 
-          {/* Ghost overlay for final check */}
           {ghostUrl && showGhost && (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={ghostUrl} alt="ghost" className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+            <img src={ghostUrl} alt="ghost"
+              className="absolute inset-0 w-full h-full object-cover pointer-events-none"
               style={{ opacity: 0.45 }} />
           )}
 
-          {/* Pose + date label */}
-          <div className="absolute top-4 left-4 px-3 py-1.5 rounded-lg"
-            style={{ background: 'rgba(0,0,0,0.6)', fontFamily: 'monospace', fontSize: '11px', color: 'rgba(255,255,255,0.8)' }}>
-            {pose.toUpperCase()} · {new Date().toISOString().split('T')[0]}
+          {/* Top label */}
+          <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 pt-14 pb-4"
+            style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.6), transparent)' }}>
+            <div>
+              <p className="text-white font-semibold text-sm">Review frame</p>
+              <p className="text-white/50 text-xs font-mono mt-0.5">
+                {pose.toUpperCase()} · {new Date().toISOString().split('T')[0]}
+              </p>
+            </div>
+            {ghostUrl && (
+              <button onClick={() => setShowGhost(s => !s)}
+                className="px-3 py-1.5 rounded-full text-xs font-semibold active:scale-90 transition-all"
+                style={{
+                  background: showGhost ? 'rgba(245,158,11,0.3)' : 'rgba(255,255,255,0.15)',
+                  border: `1px solid ${showGhost ? 'rgba(245,158,11,0.6)' : 'rgba(255,255,255,0.2)'}`,
+                  color: showGhost ? '#f59e0b' : 'rgba(255,255,255,0.8)',
+                  backdropFilter: 'blur(10px)',
+                }}>
+                {showGhost ? 'Hide ghost' : 'Compare'}
+              </button>
+            )}
           </div>
-
-          {/* Ghost toggle */}
-          {ghostUrl && (
-            <button onClick={() => setShowGhost(s => !s)}
-              className="absolute top-4 right-4 w-10 h-10 rounded-full flex items-center justify-center active:scale-90"
-              style={{ background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(255,255,255,0.2)' }}>
-              <span className="text-sm">{showGhost ? '👁' : '👁‍🗨'}</span>
-            </button>
-          )}
         </div>
       </div>
 
-      {/* Top label */}
-      <div className="absolute top-0 left-0 right-0 z-10 text-center pt-12 pb-4"
-        style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.8), transparent)' }}>
-        <p className="text-sm font-semibold" style={{ color: 'rgba(255,255,255,0.9)' }}>
-          Review your frame
-        </p>
-        {ghostUrl && (
-          <p className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.5)' }}>
-            Tap 👁 to compare with yesterday
-          </p>
-        )}
-      </div>
-
       {/* Bottom controls */}
-      <div className="absolute bottom-0 left-0 right-0 z-10 px-6 pb-10 pt-4"
-        style={{ background: 'linear-gradient(transparent, rgba(0,0,0,0.9))' }}>
+      <div className="absolute bottom-0 left-0 right-0 px-6 pb-12 pt-6"
+        style={{ background: 'linear-gradient(transparent, rgba(0,0,0,0.95))' }}>
         {error && (
-          <p className="text-xs text-center mb-3 px-3 py-2 rounded-lg"
-            style={{ background: '#3f1111', color: '#fca5a5' }}>{error}</p>
+          <div className="mb-4 px-4 py-3 rounded-2xl text-xs leading-relaxed"
+            style={{ background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5' }}>
+            {error}
+          </div>
         )}
-        <div className="flex gap-4">
+        <div className="flex gap-3">
           <button onClick={onRetake} disabled={saving}
-            className="flex-1 py-4 rounded-2xl font-bold text-sm active:scale-95 transition-all"
-            style={{ background: 'rgba(255,255,255,0.1)', color: 'white', border: '1px solid rgba(255,255,255,0.2)' }}>
+            className="flex-1 py-4 rounded-2xl font-semibold text-sm active:scale-95 transition-all"
+            style={{
+              background: 'rgba(255,255,255,0.1)',
+              border: '1px solid rgba(255,255,255,0.15)',
+              color: 'white',
+              backdropFilter: 'blur(20px)',
+            }}>
             Retake
           </button>
           <button onClick={save} disabled={saving}
-            className="flex-[2] py-4 rounded-2xl font-bold text-sm active:scale-95 transition-all"
-            style={{ background: saving ? 'var(--accent-dim)' : 'var(--accent)', color: '#000' }}>
-            {saving ? 'Saving…' : 'Save frame ✓'}
+            className="flex-[2] py-4 rounded-2xl font-bold text-sm active:scale-95 transition-all flex items-center justify-center gap-2"
+            style={{
+              background: saving ? 'rgba(245,158,11,0.6)' : 'linear-gradient(135deg, #f59e0b, #d97706)',
+              color: '#000',
+              boxShadow: saving ? 'none' : '0 4px 24px rgba(245,158,11,0.35)',
+            }}>
+            {saving ? (
+              <><SpinnerIcon /> Saving…</>
+            ) : (
+              'Save frame ✓'
+            )}
           </button>
         </div>
       </div>
     </div>
+  )
+}
+
+function SpinnerIcon() {
+  return (
+    <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeOpacity="0.3"/>
+      <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+    </svg>
   )
 }

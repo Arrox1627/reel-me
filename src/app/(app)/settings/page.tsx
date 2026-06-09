@@ -16,7 +16,7 @@ export default function SettingsPage() {
   const [localOnly, setLocalOnly] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState<'photo' | 'all' | 'account' | null>(null)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<'all' | 'account' | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [iosPrompt, setIosPrompt] = useState(false)
   const router = useRouter()
@@ -32,25 +32,20 @@ export default function SettingsPage() {
   }, [profile])
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && isIOS() && !isStandaloneMode()) {
-      setIosPrompt(true)
-    }
+    if (typeof window !== 'undefined' && isIOS() && !isStandaloneMode()) setIosPrompt(true)
   }, [])
 
   async function saveSettings() {
     setSaving(true)
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-
     await supabase.from('profiles').update({
       reminder_time: reminderTime,
       notifications_enabled: notificationsEnabled,
       default_pose: defaultPose,
       local_only_mode: localOnly,
     }).eq('id', user.id)
-
-    setSaving(false)
-    setSaved(true)
+    setSaving(false); setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
 
@@ -58,11 +53,8 @@ export default function SettingsPage() {
     setNotificationsEnabled(enabled)
     if (enabled) {
       const perm = await Notification.requestPermission()
-      if (perm === 'granted') {
-        await subscribeToPush()
-      } else {
-        setNotificationsEnabled(false)
-      }
+      if (perm === 'granted') await subscribeToPush()
+      else setNotificationsEnabled(false)
     } else {
       await unsubscribeFromPush()
       await fetch('/api/subscribe', { method: 'DELETE' })
@@ -73,26 +65,16 @@ export default function SettingsPage() {
     setDeleting(true)
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-
-    // List and delete all files
     const { data: files } = await supabase.storage.from('photos').list(user.id, { limit: 1000 })
     if (files?.length) {
-      // Recursively delete pose folders
       for (const folder of files) {
-        const { data: subFiles } = await supabase.storage
-          .from('photos')
-          .list(`${user.id}/${folder.name}`, { limit: 1000 })
-        if (subFiles?.length) {
-          await supabase.storage.from('photos')
-            .remove(subFiles.map(f => `${user.id}/${folder.name}/${f.name}`))
-        }
+        const { data: sub } = await supabase.storage.from('photos').list(`${user.id}/${folder.name}`, { limit: 1000 })
+        if (sub?.length) await supabase.storage.from('photos').remove(sub.map(f => `${user.id}/${folder.name}/${f.name}`))
       }
     }
-
     await supabase.from('photos').delete().eq('user_id', user.id)
     await clearAllLocalPhotos()
-    setDeleting(false)
-    setShowDeleteConfirm(null)
+    setDeleting(false); setShowDeleteConfirm(null)
   }
 
   async function deleteAccount() {
@@ -107,125 +89,129 @@ export default function SettingsPage() {
     router.push('/login')
   }
 
-  async function signOut() {
-    await supabase.auth.signOut()
-    router.push('/login')
-  }
-
   if (loading) {
     return <div className="min-h-dvh flex items-center justify-center"><p style={{ color: 'var(--text-muted)' }}>Loading…</p></div>
   }
 
   return (
-    <div className="min-h-dvh px-5 pt-10 pb-8">
-      <h1 className="text-2xl font-black mb-8" style={{ color: 'var(--text-primary)', letterSpacing: '-0.03em' }}>
-        Settings
-      </h1>
+    <div className="min-h-dvh px-4 pt-12 pb-8">
+      <div className="fixed inset-0 pointer-events-none overflow-hidden">
+        <div className="absolute bottom-0 left-0 w-72 h-72 rounded-full"
+          style={{ background: 'radial-gradient(circle, rgba(120,80,200,0.07) 0%, transparent 70%)', filter: 'blur(50px)' }} />
+      </div>
 
-      {/* iOS add to home screen prompt */}
+      <h1 className="text-2xl font-black tracking-tight mb-7 fade-up"
+        style={{ color: 'var(--text-primary)', letterSpacing: '-0.03em' }}>Settings</h1>
+
+      {/* iOS prompt */}
       {iosPrompt && (
-        <div className="rounded-2xl p-4 mb-5 flex gap-3"
-          style={{ background: '#1a1600', border: '1px solid var(--accent)' }}>
-          <span className="text-xl">📲</span>
+        <div className="rounded-2xl p-4 mb-5 flex gap-3 fade-up"
+          style={{ background: 'rgba(245,166,35,0.1)', border: '1px solid rgba(245,166,35,0.25)' }}>
+          <span className="text-xl flex-none">📲</span>
           <div>
-            <p className="text-sm font-semibold" style={{ color: 'var(--accent)' }}>Install for better notifications</p>
-            <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-              On iOS, tap <strong style={{ color: 'var(--text-secondary)' }}>Share</strong> → <strong style={{ color: 'var(--text-secondary)' }}>Add to Home Screen</strong> to enable daily push notifications.
+            <p className="text-sm font-semibold" style={{ color: 'var(--accent)' }}>Add to Home Screen</p>
+            <p className="text-xs mt-1 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              Tap <strong style={{ color: 'var(--text-secondary)' }}>Share</strong> → <strong style={{ color: 'var(--text-secondary)' }}>Add to Home Screen</strong> to enable daily notifications on iOS.
             </p>
           </div>
         </div>
       )}
 
       {/* Reminder */}
-      <Section title="Daily reminder">
-        <Row label="Time">
+      <SettingsSection title="Reminder" delay={0.04}>
+        <SettingsRow label="Time">
           <input type="time" value={reminderTime} onChange={e => setReminderTime(e.target.value)}
-            className="px-3 py-2 rounded-lg text-sm outline-none"
-            style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
-        </Row>
-        <Row label="Notifications">
-          <Toggle checked={notificationsEnabled} onChange={toggleNotifications} />
-        </Row>
-        <p className="text-xs px-1 pt-1" style={{ color: 'var(--text-muted)' }}>
-          Timezone: {profile?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone}
+            className="px-3 py-2 rounded-xl text-sm transition-all"
+            style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid var(--glass-border)', color: 'var(--text-primary)' }} />
+        </SettingsRow>
+        <SettingsRow label="Notifications">
+          <GlassToggle checked={notificationsEnabled} onChange={toggleNotifications} />
+        </SettingsRow>
+        <p className="text-xs pt-1 px-1" style={{ color: 'var(--text-muted)' }}>
+          {profile?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone}
         </p>
-      </Section>
+      </SettingsSection>
 
       {/* Capture */}
-      <Section title="Capture">
-        <Row label="Default pose">
+      <SettingsSection title="Capture" delay={0.08}>
+        <SettingsRow label="Default pose">
           <div className="flex gap-1.5">
             {(['front', 'side', 'back'] as Pose[]).map(p => (
               <button key={p} onClick={() => setDefaultPose(p)}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all active:scale-90"
-                style={{ background: defaultPose === p ? 'var(--accent)' : 'var(--bg-elevated)', color: defaultPose === p ? '#000' : 'var(--text-muted)', border: '1px solid var(--border)' }}>
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold capitalize transition-all active:scale-90"
+                style={defaultPose === p
+                  ? { background: 'linear-gradient(135deg,#f5a623,#e8960f)', color: '#000' }
+                  : { background: 'rgba(255,255,255,0.07)', color: 'var(--text-secondary)', border: '1px solid var(--glass-border)' }}>
                 {p}
               </button>
             ))}
           </div>
-        </Row>
-        <Row label="Local-only mode">
-          <Toggle checked={localOnly} onChange={setLocalOnly} />
-        </Row>
+        </SettingsRow>
+        <SettingsRow label="Local-only mode">
+          <GlassToggle checked={localOnly} onChange={setLocalOnly} />
+        </SettingsRow>
         {localOnly && (
-          <p className="text-xs px-1 pt-1" style={{ color: 'var(--accent)' }}>
-            Photos stored on this device only — no server uploads.
+          <p className="text-xs pt-1 px-1" style={{ color: 'var(--accent)' }}>
+            Photos stored on-device only — no uploads.
           </p>
         )}
-      </Section>
+      </SettingsSection>
 
-      {/* Save */}
+      {/* Save button */}
       <button onClick={saveSettings} disabled={saving}
-        className="w-full py-3.5 rounded-2xl font-bold text-sm active:scale-95 transition-all mb-6"
-        style={{ background: saved ? '#22c55e' : 'var(--accent)', color: '#000', opacity: saving ? 0.7 : 1 }}>
+        className="w-full py-3.5 rounded-2xl font-bold text-sm active:scale-95 transition-all mb-5 fade-up btn-accent"
+        style={{ opacity: saving ? 0.7 : 1, animationDelay: '0.12s' }}>
         {saved ? '✓ Saved' : saving ? 'Saving…' : 'Save settings'}
       </button>
 
-      {/* Privacy & data */}
-      <Section title="Privacy & data">
+      {/* Data */}
+      <SettingsSection title="Data & Privacy" delay={0.15}>
         <button onClick={() => setShowDeleteConfirm('all')}
-          className="w-full py-3 rounded-xl text-sm font-semibold text-left px-4 active:scale-95 transition-all"
-          style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--danger)' }}>
+          className="w-full py-3 text-sm font-semibold text-left px-1 active:scale-95 transition-all"
+          style={{ color: 'var(--danger)' }}>
           Delete all photos
         </button>
-        <button onClick={signOut}
-          className="w-full py-3 rounded-xl text-sm font-semibold text-left px-4 active:scale-95 transition-all mt-2"
-          style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+        <div className="h-px" style={{ background: 'var(--glass-border)' }} />
+        <button onClick={() => supabase.auth.signOut().then(() => router.push('/login'))}
+          className="w-full py-3 text-sm font-semibold text-left px-1 active:scale-95 transition-all"
+          style={{ color: 'var(--text-secondary)' }}>
           Sign out
         </button>
+        <div className="h-px" style={{ background: 'var(--glass-border)' }} />
         <button onClick={() => setShowDeleteConfirm('account')}
-          className="w-full py-3 rounded-xl text-sm font-semibold text-left px-4 active:scale-95 transition-all mt-2"
-          style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--danger)' }}>
+          className="w-full py-3 text-sm font-semibold text-left px-1 active:scale-95 transition-all"
+          style={{ color: 'var(--danger)' }}>
           Delete account & all data
         </button>
-      </Section>
+      </SettingsSection>
 
-      {/* Confirm dialog */}
+      {/* Confirm sheet */}
       {showDeleteConfirm && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center px-4 pb-6"
-          style={{ background: 'rgba(0,0,0,0.7)' }}
+        <div className="fixed inset-0 z-50 flex items-end justify-center px-4 pb-8"
+          style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)' }}
           onClick={() => setShowDeleteConfirm(null)}>
-          <div className="w-full max-w-sm rounded-2xl p-6"
-            style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}
+          <div className="w-full max-w-sm rounded-3xl p-6 glass-bright"
             onClick={e => e.stopPropagation()}>
+            <div className="w-10 h-10 rounded-2xl flex items-center justify-center mb-4"
+              style={{ background: 'rgba(255,69,58,0.15)', border: '1px solid rgba(255,69,58,0.2)' }}>
+              <span className="text-lg">⚠️</span>
+            </div>
             <p className="font-bold text-base mb-2" style={{ color: 'var(--text-primary)' }}>
               {showDeleteConfirm === 'account' ? 'Delete account?' : 'Delete all photos?'}
             </p>
-            <p className="text-sm mb-5" style={{ color: 'var(--text-muted)' }}>
+            <p className="text-sm mb-6 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
               {showDeleteConfirm === 'account'
-                ? 'This will permanently delete your account, all photos, and all data. This cannot be undone.'
-                : 'This will permanently delete all your progress photos. Your account will remain. This cannot be undone.'}
+                ? 'Permanently deletes your account, all photos, and all data. This cannot be undone.'
+                : 'Permanently deletes all your progress photos. Your account will remain. This cannot be undone.'}
             </p>
             <div className="flex gap-3">
               <button onClick={() => setShowDeleteConfirm(null)}
-                className="flex-1 py-3 rounded-xl font-semibold text-sm"
-                style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>
+                className="flex-1 py-3.5 rounded-2xl font-semibold text-sm btn-glass">
                 Cancel
               </button>
-              <button
-                onClick={showDeleteConfirm === 'account' ? deleteAccount : deleteAllPhotos}
+              <button onClick={showDeleteConfirm === 'account' ? deleteAccount : deleteAllPhotos}
                 disabled={deleting}
-                className="flex-1 py-3 rounded-xl font-bold text-sm"
+                className="flex-1 py-3.5 rounded-2xl font-bold text-sm active:scale-95 transition-all"
                 style={{ background: 'var(--danger)', color: 'white', opacity: deleting ? 0.7 : 1 }}>
                 {deleting ? 'Deleting…' : 'Delete'}
               </button>
@@ -237,35 +223,35 @@ export default function SettingsPage() {
   )
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function SettingsSection({ title, children, delay = 0 }: { title: string; children: React.ReactNode; delay?: number }) {
   return (
-    <div className="mb-6">
-      <p className="text-xs font-semibold uppercase tracking-wider mb-3 px-1" style={{ color: 'var(--text-muted)' }}>
+    <div className="mb-5 fade-up" style={{ animationDelay: `${delay}s` }}>
+      <p className="text-xs font-semibold uppercase tracking-wider mb-2 px-1" style={{ color: 'var(--text-muted)' }}>
         {title}
       </p>
-      <div className="rounded-2xl overflow-hidden" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
-        <div className="px-4 py-3 space-y-3">{children}</div>
+      <div className="rounded-2xl px-4 py-1 glass">
+        {children}
       </div>
     </div>
   )
 }
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
+function SettingsRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between py-1">
+    <div className="flex items-center justify-between py-3">
       <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>{label}</span>
       {children}
     </div>
   )
 }
 
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+function GlassToggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <button onClick={() => onChange(!checked)}
-      className="relative w-12 h-7 rounded-full transition-all active:scale-90"
-      style={{ background: checked ? 'var(--accent)' : 'var(--bg-elevated)', border: '1px solid var(--border)' }}>
+      className="relative rounded-full transition-all active:scale-90"
+      style={{ width: 44, height: 26, background: checked ? 'linear-gradient(135deg,#f5a623,#e8960f)' : 'rgba(255,255,255,0.1)', border: '1px solid var(--glass-border)', boxShadow: checked ? '0 2px 10px rgba(245,166,35,0.3)' : 'none' }}>
       <div className="absolute top-0.5 rounded-full transition-all"
-        style={{ width: 24, height: 24, background: '#fff', left: checked ? 22 : 2 }} />
+        style={{ width: 22, height: 22, background: '#fff', left: checked ? 20 : 2, boxShadow: '0 1px 4px rgba(0,0,0,0.3)' }} />
     </button>
   )
 }
